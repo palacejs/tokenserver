@@ -12,7 +12,10 @@ const FILE_PATH = 'tokens.json';
 // 🔄 Süresi geçmiş tokenları temizle
 function cleanExpiredTokens(data) {
     const now = new Date();
-    const validTokens = data.tokens.filter(entry => new Date(entry.expiresAt) > now);
+    const validTokens = data.tokens.filter(entry => {
+        const exp = new Date(entry.expiresAt);
+        return exp > now && !isNaN(exp); // geçerli tarih kontrolü
+    });
     return {
         count: validTokens.length,
         tokens: validTokens
@@ -40,7 +43,7 @@ app.post('/save-token', (req, res) => {
         if (exists) return res.json({ message: 'Token already exists' });
 
         const now = new Date();
-        const expires = new Date(now.getTime() + 24 * 60 * 60 * 1000); // 24 saat sonra
+        const expires = new Date(now.getTime() + 3.5 * 60 * 60 * 1000); // 🔧 3.5 saat geçerlilik
 
         tokenData.tokens.push({
             token: jwt,
@@ -74,18 +77,6 @@ app.get('/tokens', (req, res) => {
         }
     });
 });
-
-// ⏱️ Her 15 dakikada bir expired token temizle (isteğe bağlı, zamanlayıcı)
-setInterval(() => {
-    fs.readFile(FILE_PATH, 'utf8', (err, data) => {
-        if (err) return;
-        try {
-            let tokenData = JSON.parse(data);
-            const cleaned = cleanExpiredTokens(tokenData);
-            fs.writeFile(FILE_PATH, JSON.stringify(cleaned, null, 2), () => {});
-        } catch (_) {}
-    });
-}, 15 * 60 * 1000); // 15 dakika
 
 app.listen(PORT, () => {
     console.log(`🚀 Server running on port ${PORT}`);
