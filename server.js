@@ -8,14 +8,12 @@ app.use(cors());
 app.use(express.json());
 
 const FILE_PATH = 'tokens.json';
+const TOKEN_EXPIRATION_HOURS = 3.5; // 3.5 saatlik geçerlilik süresi
 
-// 🔄 Süresi geçmiş tokenları temizle
+// 🔄 Geçerli tokenları filtrele
 function cleanExpiredTokens(data) {
     const now = new Date();
-    const validTokens = data.tokens.filter(entry => {
-        const exp = new Date(entry.expiresAt);
-        return exp > now && !isNaN(exp); // geçerli tarih kontrolü
-    });
+    const validTokens = data.tokens.filter(entry => new Date(entry.expiresAt) > now);
     return {
         count: validTokens.length,
         tokens: validTokens
@@ -27,23 +25,38 @@ app.post('/save-token', (req, res) => {
     const { jwt } = req.body;
     if (!jwt) return res.status(400).json({ error: 'JWT missing' });
 
+    // Var olan dosyayı oku, bozuksa sıfırdan başla ama sıfırlama!
     fs.readFile(FILE_PATH, 'utf8', (err, data) => {
         let tokenData = { count: 0, tokens: [] };
 
         if (!err && data) {
             try {
                 tokenData = JSON.parse(data);
-                tokenData = cleanExpiredTokens(tokenData); // önce expired olanları sil
             } catch (e) {
-                console.error('JSON parse error:', e);
+                console.error('⚠️ JSON parse error, dosya bozulmuş olabilir. Geriye kalan tokenları kurtarmaya çalışılıyor.');
+
+                // Geçerli JSON olmayan veriden hatalı kısmı temizlemeye çalış
+                const safeStart = data.indexOf('{');
+                const safeEnd = data.lastIndexOf('}');
+                if (safeStart !== -1 && safeEnd !== -1) {
+                    try {
+                        const fixed = data.slice(safeStart, safeEnd + 1);
+                        tokenData = JSON.parse(fixed);
+                    } catch (_) {
+                        console.warn('Yine kurtarılamadı, boş JSON ile devam ediliyor.');
+                        tokenData = { count: 0, tokens: [] };
+                    }
+                }
             }
         }
+
+        tokenData = cleanExpiredTokens(tokenData); // Süresi geçenleri temizle
 
         const exists = tokenData.tokens.find(entry => entry.token === jwt);
         if (exists) return res.json({ message: 'Token already exists' });
 
         const now = new Date();
-        const expires = new Date(now.getTime() + 3.5 * 60 * 60 * 1000); // 🔧 3.5 saat geçerlilik
+        const expires = new Date(now.getTime() + TOKEN_EXPIRATION_HOURS * 60 * 60 * 1000); // 3.5 saat sonrası
 
         tokenData.tokens.push({
             token: jwt,
@@ -55,25 +68,26 @@ app.post('/save-token', (req, res) => {
 
         fs.writeFile(FILE_PATH, JSON.stringify(tokenData, null, 2), err => {
             if (err) {
-                console.error('Write error:', err);
+                console.error('❌ Write error:', err);
                 return res.status(500).json({ error: 'Failed to save token' });
             }
             console.log('✅ Token saved');
-            res.json({ message: 'Token saved with timestamp' });
+            res.json({ message: 'Token saved successfully' });
         });
     });
 });
 
-// 📤 Tokenları görüntüleme endpointi
+// 📤 Kayıtlı tokenları gösteren endpoint
 app.get('/tokens', (req, res) => {
     fs.readFile(FILE_PATH, 'utf8', (err, data) => {
         if (err) return res.status(500).json({ error: 'Failed to read tokens' });
+
         try {
             let tokenData = JSON.parse(data);
-            tokenData = cleanExpiredTokens(tokenData); // expired'ları gösterme
+            tokenData = cleanExpiredTokens(tokenData);
             res.json(tokenData);
         } catch (e) {
-            res.status(500).json({ error: 'Invalid JSON structure' });
+            res.status(500).json({ error: 'Invalid token file' });
         }
     });
 });
